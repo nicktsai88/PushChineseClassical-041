@@ -3,11 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>(推與敲) 第41篇 旅夜書懷 - 互動式古文學習</title>
+    <title>(推與敲) 第41篇 旅夜書懷 - 互動式古文學習 (AI 旗艦版)</title>
     <!-- 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 載入 Marked.js -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 載入 JSZip 和 FileSaver (用於打包下載) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <!-- 載入 FontAwesome 圖標 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- 載入 Canvas Confetti (特效) -->
@@ -177,7 +180,7 @@
                     <span class="font-bold text-xl tracking-wider">古文互動教室</span>
                 </div>
                 <div class="hidden md:block text-sm opacity-80">
-                    GitHub 版
+                    AI 旗艦版
                 </div>
             </div>
         </div>
@@ -275,6 +278,8 @@
     </div>
 
     <script>
+        const apiKey = ""; // API Key
+        
         // ----------------------------------------------------
         // 1. 教材資料結構 (Content Data) - 旅夜書懷
         // ----------------------------------------------------
@@ -295,7 +300,7 @@
                 "**譬喻 (Metaphor):** 「飄飄何所似？天地一沙鷗」運用明喻，將自己比作天地間的一隻沙鷗，生動傳神。"
             ],
             
-            // 語詞精解
+            // 語詞精解 - 將全部嵌入文中
             vocabulary: [
                 { word: "細草", zhuyin: "ㄒㄧˋ ㄘㄠˇ", pos: "名詞", meaning: "岸邊細嫩的草。" },
                 { word: "微風", zhuyin: "ㄨㄟ ㄈㄥ", pos: "名詞", meaning: "輕微的風。" },
@@ -330,14 +335,18 @@
                     translation: "微風輕拂著岸邊的細草，高聳桅杆的孤舟在夜裡停泊。原野遼闊，遠方的星星彷彿低垂至地面；長江奔流，月影在波濤中湧動。",
                     audioText: "細草微風岸，危檣獨夜舟。星垂平野闊，月湧大江流。",
                     notes: {},
-                    imagePath: "images/reading_segment_1.jpg"
+                    // 圖片提示：彩色豐富、人像逼真
+                    imagePrompt: "Hyper-realistic, colorful, detailed cinematic shot. Night scene on the Yangtze River. A small wooden boat with a tall mast anchored near a grassy bank. A vast, flat plain stretches into the distance with bright stars hanging low. The moon reflection is turbulent in the rushing river water. Lonely, majestic atmosphere. 8k resolution. NO text.",
+                    imageData: null
                 },
                 {
                     original: "名豈文章著，官應老病休。<br>飄飄何所似? 天地一沙鷗。",
                     translation: "我的名聲難道是因為文章才顯著的嗎？做官本就應該因為年老多病而罷休。這飄泊不定的一生像什麼呢？就像那廣闊天地間的一隻孤單沙鷗。",
                     audioText: "名豈文章著，官應老病休。飄飄何所似? 天地一沙鷗。",
                     notes: {},
-                    imagePath: "images/reading_segment_2.jpg"
+                    // 圖片提示：彩色豐富、人像逼真
+                    imagePrompt: "Hyper-realistic, colorful, detailed portrait. An elderly Chinese poet (Du Fu) with a white beard, looking haggard and sad, standing on the boat deck. He is looking at a single seagull flying across the vast, dark sky and river. Symbolic, emotional, solitude. 8k resolution. NO text.",
+                    imageData: null
                 }
             ],
             // 隨堂測驗 (高難度 - 20題)
@@ -363,7 +372,7 @@
                 { q: "詩中哪一個字是全詩的「詩眼」，貫穿全篇？", opts: ["A. 風", "B. 月", "C. 獨", "D. 流"], ans: "C", exp: "「獨」字奠定了全詩孤寂的基調，從獨夜舟到一沙鷗。" },
                 { q: "關於頷聯的對仗，下列何者正確？", opts: ["A. 動詞對名詞", "B. 顏色對聲音", "C. 天景對地景，靜態對動態", "D. 虛詞對實詞"], ans: "C", exp: "星垂（天、靜/緩）對月湧（地/水、動/急）。" }
             ]
-        };
+        }; // ContentData ends here
 
         // 預處理所有關鍵字 (將 contentData.vocabulary 轉為 Map 結構)
         const allKeywords = {};
@@ -376,7 +385,10 @@
         // ----------------------------------------------------
         let currentTab = 'overview';
         let chatHistory = [];
+        let isGeneratingImage = false;
+        let currentAudio = null;
         let currentPersona = 'dufu'; 
+        let hasPreloadedStory = false;
         let userAnswers = {}; 
 
         const personas = {
@@ -408,7 +420,9 @@
             start: {
                 id: 'start',
                 text: "你是杜甫，一個月黑風高的夜晚，你獨自坐在停泊於長江岸邊的小舟上。微風吹拂著岸邊的細草，高聳的桅杆在夜色中顯得格外孤獨。你的心情沉重，此時你會...",
-                imagePath: "images/rpg_start.jpg",
+                // 圖片提示：彩色豐富、人像逼真
+                imgPrompt: "Hyper-realistic, colorful, detailed cinematic shot. Du Fu sitting alone on a small boat at night. Dim lantern light. He looks weary. Background is the dark silhouette of the riverbank with tall grass. 8k resolution. NO text.",
+                imageData: null,
                 choices: [
                     { text: "抬頭仰望星空，觀察四周景色", next: "view_scenery" },
                     { text: "低頭沉思自己的官場生涯", next: "reflect_career" }
@@ -417,7 +431,9 @@
             view_scenery: {
                 id: 'view_scenery',
                 text: "你抬頭望去，只見原野遼闊無邊，星星彷彿低垂到了地面；江水奔騰湧動，月影在波濤中起伏。面對如此壯麗卻又蒼茫的景色，你感到...",
-                imagePath: "images/rpg_view_scenery.jpg",
+                // 圖片提示：彩色豐富、人像逼真
+                imgPrompt: "Hyper-realistic, colorful, detailed landscape. A vast starry sky hanging low over a flat plain. A wide, rushing river reflecting the moonlight. A tiny boat in the corner. Majestic and lonely. 8k resolution. NO text.",
+                imageData: null,
                 choices: [
                     { text: "感嘆宇宙浩瀚，自身渺小 (進入寫詩)", next: "write_poem" },
                     { text: "覺得景色恐懼，躲回船艙 (結束)", next: "bad_end_1" }
@@ -426,7 +442,9 @@
             reflect_career: {
                 id: 'reflect_career',
                 text: "你想起自己一生顛沛流離，雖有濟世之志，卻始終未能如願。如今名聲雖因文章而顯，但這真的是你想要的嗎？老病纏身，被迫辭官...",
-                imagePath: "images/rpg_reflect_career.jpg",
+                // 圖片提示：彩色豐富、人像逼真
+                imgPrompt: "Hyper-realistic, colorful, detailed close-up. Du Fu's face, illuminated by a flickering candle. Tears in his eyes, expression of regret and sorrow. Background shows vague memories of official courts fading away. 8k. NO text.",
+                imageData: null,
                 choices: [
                     { text: "憤世嫉俗，痛罵時局", next: "bad_end_2" },
                     { text: "將這份悲涼化為詩句 (進入寫詩)", next: "write_poem" }
@@ -435,21 +453,23 @@
             bad_end_1: {
                 id: 'bad_end_1',
                 text: "【Bad Ending: 逃避現實】你無法面對這無邊的孤寂，躲進船艙蒙頭大睡。這份深刻的感觸未能化為千古名句，世間少了一首偉大的詩篇。",
-                imagePath: "images/rpg_bad_end_1.jpg",
+                imageData: null,
                 choices: [{ text: "重來", next: "start" }],
                 isEnding: true
             },
             bad_end_2: {
                 id: 'bad_end_2',
                 text: "【Bad Ending: 鬱鬱而終】你沉浸在憤怒中無法自拔，氣血攻心，病情加重。你沒有寫下這首詩，只留下了一聲長嘆。",
-                imagePath: "images/rpg_bad_end_2.jpg",
+                imageData: null,
                 choices: [{ text: "重來", next: "start" }],
                 isEnding: true
             },
             write_poem: {
                 id: 'write_poem',
                 text: "景觸情生，你提筆寫下：「名豈文章著，官應老病休。」看著江面上飛過的一隻沙鷗，你覺得那就像你自己...「飄飄何所似？天地一沙鷗。」",
-                imagePath: "images/rpg_write_poem.jpg",
+                // 圖片提示：彩色豐富、人像逼真
+                imgPrompt: "Hyper-realistic, colorful, cinematic shot. Du Fu writing calligraphy on a scroll on the boat deck. A single seagull flies past the moon in the background. The scene is artistic and poignant. 8k resolution. NO text.",
+                imageData: null,
                 choices: [
                     { text: "完成詩作，擲筆長嘆", next: "happy_end" }
                 ]
@@ -457,7 +477,9 @@
             happy_end: {
                 id: 'happy_end',
                 text: "【True Ending: 詩聖千古】你寫下了《旅夜書懷》。雖然你的肉體依然漂泊，但你的靈魂已透過這首詩與天地共存，成為後世傳頌的千古絕唱。",
-                imagePath: "images/rpg_happy_end.jpg",
+                // 圖片提示：彩色豐富、人像逼真
+                imgPrompt: "Hyper-realistic, colorful, abstract visualization. The poem's text floating in the starry sky above the river. Du Fu looking peaceful, accepting his fate. 8k resolution. NO text.",
+                imageData: null,
                 choices: [{ text: "重來", next: "start" }],
                 isEnding: true,
                 win: true
@@ -511,7 +533,10 @@
                     case 'analysis': renderAnalysis(container); break;
                     case 'chat': renderChat(container); break;
                     case 'quiz': renderQuiz(container); break;
-                    case 'story': renderStory(container); break;
+                    case 'story': 
+                        renderStory(container); 
+                        preloadStoryImages(); 
+                        break;
                 }
                 container.style.opacity = '1';
             }, 200);
@@ -541,6 +566,7 @@
         function renderReading(container) {
             let segmentsHtml = contentData.segments.map((seg, idx) => {
                 let displayHtml = seg.original;
+                // 智慧嵌入所有關鍵字
                 const sortedKeys = Object.keys(allKeywords).sort((a, b) => b.length - a.length);
                 const placeholders = {};
                 let counter = 0;
@@ -559,14 +585,9 @@
                     displayHtml = displayHtml.split(ph).join(`<span class="interactive-word" onclick="showNote('${key}', ${idx}, this, event)">${key}</span>`);
                 });
 
-                // 靜態圖片載入邏輯
-                let imageSection = `
-                    <div class="mt-6 rounded-lg overflow-hidden shadow-lg">
-                        <img src="${seg.imagePath}" 
-                             class="w-full h-auto rounded-lg shadow-md" 
-                             alt="段落插圖"
-                             onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'h-48 bg-gray-100 flex items-center justify-center text-gray-400 border-2 border-dashed border-gray-300\'><i class=\'fas fa-image mr-2\'></i>圖片準備中...請確認 images 資料夾</div>'">
-                    </div>`;
+                let imageSection = seg.imageData 
+                    ? `<div class="mt-6 rounded-lg overflow-hidden shadow-lg animate-fade-in"><img src="${seg.imageData}" class="w-full h-auto rounded-lg shadow-md" alt="段落插圖"></div>`
+                    : `<div id="img-placeholder-${idx}" class="hidden mt-6 h-64 bg-gray-100 rounded-lg flex items-center justify-center text-gray-400 border-2 border-dashed border-gray-300"><i class="fas fa-image mr-2"></i>AI 擬真圖解區</div>`;
 
                 return `
                     <div class="group mb-12 relative pl-6 border-l-4 border-gray-200 hover:border-amber-500 transition-colors duration-300">
@@ -593,6 +614,20 @@
             }).join('');
 
             container.innerHTML = `
+                <div class="flex flex-col md:flex-row gap-6 mb-8 items-center bg-amber-50 p-4 rounded-xl border border-amber-100">
+                    <div class="flex-grow">
+                        <h3 class="font-bold text-amber-900 text-lg">AI 擬真圖解</h3>
+                        <p class="text-sm text-amber-700">還原杜甫夜泊江上之孤寂與壯麗景色 (彩色豐富人像逼真風格)。</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="btn-gen-all" onclick="generateAllImages()" class="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow transition flex items-center font-medium">
+                            <i class="fas fa-paint-brush mr-2"></i>一鍵生成全篇圖解
+                        </button>
+                        <button id="btn-download-all" onclick="downloadAllImages()" class="px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg shadow transition flex items-center font-medium">
+                            <i class="fas fa-download mr-2"></i>下載所有圖片
+                        </button>
+                    </div>
+                </div>
                 <div class="max-w-3xl mx-auto">
                     ${segmentsHtml}
                 </div>
@@ -777,6 +812,7 @@
             const userText = input.value.trim();
             if (!userText) return;
 
+            // Display user message
             const msgContainer = document.getElementById('chat-messages');
             const userBubble = document.createElement('div');
             userBubble.className = 'chat-bubble chat-user shadow-sm animate-fade-in';
@@ -786,13 +822,14 @@
             input.value = '';
             msgContainer.scrollTop = msgContainer.scrollHeight;
 
+            // AI Loading
             const aiBubble = document.createElement('div');
             aiBubble.className = 'chat-bubble chat-ai shadow-sm';
             aiBubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
             msgContainer.appendChild(aiBubble);
             msgContainer.scrollTop = msgContainer.scrollHeight;
 
-            // 靜態版本使用預設回應
+            // Simulate AI response (Mock logic)
             setTimeout(() => {
                 let reply = "";
                 if (currentPersona === 'dufu') {
@@ -806,7 +843,7 @@
                 aiBubble.innerHTML = reply;
                 chatHistory.push({ role: 'ai', content: reply });
                 msgContainer.scrollTop = msgContainer.scrollHeight;
-            }, 1000);
+            }, 1500);
         }
 
         function renderQuiz(container) {
@@ -830,7 +867,7 @@
                         feedback = `
                             <div class="mb-2">
                                 <span class="block font-bold text-red-600"><i class="fas fa-times-circle mr-1"></i>答錯了</span>
-                                <span class="block text-gray-600">您的答案：${userOption}</span>
+                                <span class="block text-gray-600">您的答案：${userOption || userAnswer}</span>
                                 <span class="block text-green-600 font-bold">正確答案：${correctOption}</span>
                             </div>
                             <div class="pt-2 border-t border-gray-200">
@@ -869,6 +906,7 @@
                     <h2 class="text-2xl font-bold text-center mb-8 text-gray-700">高難度挑戰 (共20題)</h2>
                     ${quizHtml}
                     
+                    <!-- Submit Button Area -->
                     <div class="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-lg flex justify-center items-center z-40">
                          <button onclick="submitQuiz()" class="px-8 py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-full shadow-lg transition transform hover:scale-105 flex items-center text-lg">
                             <i class="fas fa-paper-plane mr-2"></i> 交卷並查看成績
@@ -882,13 +920,14 @@
             if(!window.currentStoryNode) window.currentStoryNode = 'start';
             const node = storyNodes[window.currentStoryNode];
 
-            // 靜態載入邏輯
-            let imageContent = `<div class="w-full overflow-hidden rounded-t-xl">
-                <img src="${node.imagePath}" 
-                     class="w-full h-auto fade-in-image" 
-                     alt="場景圖"
-                     onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'h-48 bg-gray-100 flex items-center justify-center text-gray-400 border-2 border-dashed border-gray-300\'><i class=\'fas fa-image mr-2\'></i>圖片準備中...請確認 images 資料夾</div>'">
-            </div>`;
+            let imageContent;
+            if (node.isLoading) {
+                 imageContent = `<div class="h-auto min-h-[256px] bg-gray-100 flex flex-col items-center justify-center relative overflow-hidden rounded-t-xl border-b border-gray-200"><div class="z-10 text-center animate-pulse"><i class="fas fa-palette text-4xl text-amber-400 mb-3"></i><p class="text-amber-600 font-bold">正在為您繪製場景...</p></div></div>`;
+            } else if (node.imageData) {
+                imageContent = `<div class="w-full overflow-hidden rounded-t-xl"><img src="${node.imageData}" class="w-full h-auto fade-in-image" alt="場景圖"></div>`;
+            } else {
+                 imageContent = `<div class="h-auto min-h-[256px] bg-gray-100 flex flex-col items-center justify-center relative overflow-hidden rounded-t-xl border-b border-gray-200"><div class="z-10 text-center"><i class="fas fa-image text-4xl text-gray-300 mb-3"></i><p class="text-gray-500 text-sm">場景圖準備中 (彩色擬真)...</p></div></div>`;
+            }
 
             container.innerHTML = `<div class="max-w-2xl mx-auto bg-white rounded-xl shadow-xl overflow-hidden border border-amber-100">${imageContent}<div class="p-8"><div class="flex items-center mb-4 text-amber-800 text-sm font-bold uppercase tracking-widest"><i class="fas fa-scroll mr-2"></i> 抉擇時刻</div><p class="text-xl leading-relaxed text-gray-800 mb-8 font-serif">${node.text}</p>${node.isEnding ? (node.win ? `<div class="text-center mb-6 text-green-600 font-bold text-2xl p-4 bg-green-50 rounded-lg border border-green-200"><i class="fas fa-trophy mr-2"></i>達成結局</div>` : `<div class="text-center mb-6 text-gray-600 font-bold text-2xl p-4 bg-gray-50 rounded-lg border border-gray-200">故事結束</div>`) : ''}<div class="grid gap-4">${node.choices.map(c => `<button onclick="nextStoryNode('${c.next}')" class="story-choice w-full py-4 px-6 bg-white hover:bg-amber-50 border-2 border-amber-200 hover:border-amber-400 rounded-xl text-amber-900 font-bold text-lg transition duration-200 flex items-center justify-between group"><span>${c.text}</span><i class="fas fa-chevron-right text-amber-300 group-hover:text-amber-600 transition"></i></button>`).join('')}</div></div></div>`;
             if(node.win) { try { confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); } catch (e) { console.log("Confetti not loaded"); } }
@@ -897,6 +936,144 @@
         function nextStoryNode(nodeId) {
             window.currentStoryNode = nodeId;
             renderStory(document.getElementById('content-display'));
+        }
+        
+        async function preloadStoryImages() {
+            if (hasPreloadedStory) return;
+            hasPreloadedStory = true;
+            await generateStoryImage('start');
+            const allIds = Object.keys(storyNodes).filter(id => id !== 'start');
+            for (const id of allIds) {
+                await new Promise(r => setTimeout(r, 500));
+                generateStoryImage(id).catch(e => console.error(`Background gen failed for ${id}`, e));
+            }
+        }
+
+        async function generateStoryImage(nodeId) {
+            const node = storyNodes[nodeId];
+            if (node.imageData || node.isLoading) return; 
+            
+            if (!node.imgPrompt) {
+                node.imgPrompt = "Hyper-realistic, colorful, detailed cinematic shot. Ancient Chinese setting. 8k resolution. NO text.";
+            }
+
+            node.isLoading = true;
+            if (window.currentStoryNode === nodeId) { const container = document.getElementById('content-display'); if(container) renderStory(container); }
+            try {
+                // 呼叫 Gemini Imagen 4.0 API
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+                const response = await fetch(url, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ 
+                        instances: [{ prompt: node.imgPrompt }], 
+                        parameters: { sampleCount: 1 } 
+                    }) 
+                });
+                
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const data = await response.json();
+                if (data.predictions && data.predictions[0].bytesBase64Encoded) { 
+                    node.imageData = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`; 
+                } else { 
+                    throw new Error("No image data returned"); 
+                }
+            } catch (err) { 
+                console.error(`Story image failed for ${nodeId}:`, err); 
+                showError("圖片生成失敗，可能是 API 限制或網路問題。");
+            } finally { 
+                node.isLoading = false; 
+                if (window.currentStoryNode === nodeId) { 
+                    const container = document.getElementById('content-display'); 
+                    if(container) renderStory(container); 
+                } 
+            }
+        }
+
+        async function generateAllImages() {
+            if (isGeneratingImage) return;
+            const btn = document.getElementById('btn-gen-all');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>書畫繪製中...';
+            isGeneratingImage = true;
+            contentData.segments.forEach((_, i) => { document.getElementById(`img-placeholder-${i}`)?.classList.remove('hidden'); });
+            
+            try {
+                for (let i = 0; i < contentData.segments.length; i++) {
+                    if (contentData.segments[i].imageData) continue;
+                    
+                    const prompt = contentData.segments[i].imagePrompt;
+                    // 呼叫 Gemini Imagen 4.0 API
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+                    const response = await fetch(url, { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify({ 
+                            instances: [{ prompt: prompt }], 
+                            parameters: { sampleCount: 1 } 
+                        }) 
+                    });
+
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                    const data = await response.json();
+                    if (data.predictions && data.predictions[0].bytesBase64Encoded) {
+                        const b64 = `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`;
+                        contentData.segments[i].imageData = b64;
+                        const ph = document.getElementById(`img-placeholder-${i}`);
+                        if (ph) { 
+                            const imgDiv = document.createElement('div'); 
+                            imgDiv.className = "mt-6 rounded-lg overflow-hidden shadow-lg animate-fade-in"; 
+                            imgDiv.innerHTML = `<img src="${b64}" class="w-full h-auto rounded-lg shadow-md" alt="段落插圖">`; 
+                            ph.replaceWith(imgDiv); 
+                        }
+                    }
+                }
+            } catch (err) { 
+                showError("圖片生成過程中遇到了一些問題，請稍後再試。"); 
+                console.error(err); 
+            } finally { 
+                isGeneratingImage = false; 
+                btn.disabled = false; 
+                btn.innerHTML = '<i class="fas fa-check mr-2"></i>繪製完成'; 
+            }
+        }
+
+        // Download function
+        async function downloadAllImages() {
+            const zip = new JSZip();
+            let count = 0;
+            const title = contentData.metadata.title.replace(/[^\w\u4e00-\u9fa5]/g, "_") || "download";
+            const folder = zip.folder("images");
+
+            // Reading segments
+            contentData.segments.forEach((seg, index) => {
+                if (seg.imageData) {
+                    const base64Data = seg.imageData.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
+                    // Save as .jpg
+                    folder.file(`reading_segment_${index + 1}.jpg`, base64Data, {base64: true});
+                    count++;
+                }
+            });
+
+            // RPG nodes
+            Object.entries(storyNodes).forEach(([nodeId, node]) => {
+                if (node.imageData) {
+                    const base64Data = node.imageData.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
+                    // Save as .jpg
+                    folder.file(`rpg_${nodeId}.jpg`, base64Data, {base64: true});
+                    count++;
+                }
+            });
+
+            if (count === 0) {
+                showError("沒有可下載的圖片，請先生成圖片。(演示模式下無圖片)");
+                return;
+            }
+
+            const content = await zip.generateAsync({type: "blob"});
+            saveAs(content, `${title}_images.zip`);
         }
 
         function checkAnswer(idx, val, ans) {
@@ -1003,6 +1180,7 @@
             let left = rect.left + scrollLeft;
             let top = rect.bottom + scrollTop + 5; 
             
+            // 防止彈出視窗超出螢幕右側
             if (left + 300 > document.body.clientWidth) { 
                 left = document.body.clientWidth - 310; 
             }
@@ -1036,6 +1214,7 @@
             requestAnimationFrame(() => { toast.classList.remove('translate-y-10', 'opacity-0'); });
             setTimeout(() => { toast.classList.add('translate-y-10', 'opacity-0'); setTimeout(() => toast.classList.add('hidden'), 300); }, 4000);
         }
+
     </script>
 </body>
 </html>
